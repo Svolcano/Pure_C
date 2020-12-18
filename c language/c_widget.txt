@@ -1,0 +1,7 @@
+The Motif Programming Manual (free download) says this by way of introduction:
+
+So why motif? Because it remains what it has long been: the common native windowing toolkit for all the UNIX platforms, fully supported by all the major operating system vendors. It is still the only truly industrial strength toolkit capable of supporting large scale and long term projects. Everything else is tainted: it isn’t ready or fully functionally complete, or the functional specification changes in a non-backwards-compatible manner per release, or there are performance issues. Perhaps it doesn’t truly port across UNIX systems, or it isn’t fully ICCCM compliant with software written in any other toolkit on the desktop, or there are political battles as various groups try to control the specification for their own purposes. […] With motif, you know where you are: it’s stable, it’s robust, it’s professionally supported, and it all works.
+
+A reference manual is also available for download.
+
+I was a little skeptical that it would be supported on macOS, but I tried the hello world example and, sure enough, it worked fine on XQuartz. I think there’s value in using Motif rather than a monster like GTK.

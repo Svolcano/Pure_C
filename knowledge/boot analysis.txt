@@ -1,0 +1,6 @@
+系统日志分析：
+
+systemd-analyze blame
+
+# gen a graph to analysis boot time.
+systemd-anaylze plot > boot.svg

@@ -1,0 +1,382 @@
+begriffs
+Github Email Atom Feed
+Tips for stable and portable software
+August 31, 2020Newsletter ↳
+After several years’ involvement with quickly evolving programming languages, I’ve come to appreciate stability. I’d like to make my programs easy to build on a wide variety of systems with minimal adjustment. I’d like them to keep working long into the future as environments change.
+
+To think about stability more clearly, let’s divide a functioning program into its layers. Then we can examine development choices one layer at a time.
+
+concentric circles of program resources
+The more features a program needs, the further out it must reach through the layers.
+
+Layer 0: Programming language
+Choose a language with multiple implementations and a standard
+Every language has to start somewhere, often as an implementation by a single person or small group. At this stage the language evolves rapidly, and to be fair it’s this stage that advances the state of the art.
+
+However, using a language in its single-implementation stage means you’re committing a percentage of your energy to the “research project” of the language itself. You’ll deal with breaking changes (including tools), and experimental dead-ends.
+
+If you love the idea behind a new language, or believe it’s a winner and that your early familiarity will pay off, then go for it! Otherwise use a language that has advanced beyond a single implementation. That way you can focus on your domain of expertise rather than keeping up with a language research agenda.
+
+Languages get to the next stage when groups of people fork them for new situations and architectures. Some people add features, other people discover difficulties in their environments. Stakeholders then debate and reach consensus through a standardization process. The end result is that the standard, rather than a particular software artifact, defines the language and has the final say.
+
+Naturally the whole thing takes a while. Standardized languages are going to be fairly old. They’ll miss out on recent ideas, but will be well understood. Here are some mature languages with standards:
+
+Ada
+C
+Common Lisp
+ECMAScript
+Pascal
+SQL
+I’ve been using C lately because of its portability, simple (yet expressive) abstract machine model, and deep compatibility with POSIX and foundational libraries.
+
+Avoid – or wrap – compiler language extensions
+If you’re using a language with a standard, take advantage of it. First, choose a specific version of the standard. Older versions are generally more widely supported, but have fewer features. In the C world I usually pick C99 because it has some conveniences over C89, and is still supported pretty much everywhere (although only partially on Windows).
+
+Consult your compiler documentation to see if the compiler can catch accidental uses of non-standard behavior. In clang or gcc, add the following flags to your Makefile:
+
+# enforce a specific version of the standard
+CFLAGS += -std=c99 -pedantic
+Substitute another version for “c99” as desired. The pedantic flag rejects all programs that use forbidden extensions, and some other programs that do not follow ISO C.
+
+If you do want to use compiler extensions (such as those in gcc or clang), wrap them behind your own macros so that the code stays portable. The PostgreSQL project does this kind of thing in c.h. Here’s an example at random:
+
+/*
+ * Use "pg_attribute_always_inline" in place of "inline" for functions that
+ * we wish to force inlining of, even when the compiler's heuristics would
+ * choose not to.  But, if possible, don't force inlining in unoptimized
+ * debug builds.
+ */
+#if (defined(__GNUC__) && __GNUC__ > 3 && defined(__OPTIMIZE__)) || defined(__SUNPRO_C) || defined(__IBMC__)
+/* GCC > 3, Sunpro and XLC support always_inline via __attribute__ */
+#define pg_attribute_always_inline __attribute__((always_inline)) inline
+#elif defined(_MSC_VER)
+/* MSVC has a special keyword for this */
+#define pg_attribute_always_inline __forceinline
+#else
+/* Otherwise, the best we can do is to say "inline" */
+#define pg_attribute_always_inline inline
+#endif
+Notice how they adapt to various compilers and provide a final fallback. Of course, avoiding extensions in the first place is the simplest option, when possible.
+
+Layer 1: Standard library
+Learn it, and consult the standard
+Take time to learn your language’s standard library. It’s a freebie, you get it wherever your program goes. Read about the library functions in the language standard, since they will be covered there.
+
+Gaining knowledge of the standard library can help reduce reliance on unnecessary third-party libraries. The ECMAScript world, for instance, is rife with micro-libraries that attempt to supplement the ECMA standard’s real or perceived shortcomings.
+
+The size of a single-implementation language’s library is a trade-off between ease of implementation and ease of use. A giant library like that in the Go language makes it harder for creators of would-be rival implementations, and thus slows the progress to a robust standard.
+
+To learn more about the C standard library, see my article.
+
+Learn the rationale and gotchas
+Because standards bodies avoid breaking existing codebases, and because stable languages are slow to change, there will be weird or dangerous functions in the standard library. However the dangers are well known and documented in supporting literature, unlike the dangers in new, relatively untested systems.
+
+Here are some great books for C:
+
+“The CERT C Coding Standard” by Robert C. Seacord (ISBN 978-0321984043). Illustrates potential insecurity with, among other things, the standard library. Lists real code that caused vulnerabilities.
+“The Standard C Library” by P. J. Plauger (ISBN 978-0131315099). Thorough details about the C89 stdlib.
+“C Traps and Pitfalls” by Andrew Koenig (978-0201179286).
+“C Programming FAQs” by Steve Summit (ISBN 978-0201845198). I can see why these were historically the most frequently asked questions. I asked many of them myself.
+Also the C99 standard has an accompanying rationale document. It talks about alternate designs considered and rejected.
+
+Layer 2: POSIX
+Similarly to how competing C implementations led to the C standard, the Unix wars led to POSIX. POSIX specifies a “lowest common denominator” interface that many operating systems honor to a greater or lesser degree.
+
+Read the spec, compare with man pages
+Whenever you use system calls outside the C standard library, check whether they’re part of POSIX, and if their official description differs from your local man pages. The Open Group offers a free searchable HTML version of POSIX.1. As of this writing it’s POSIX.1-2017 (which is POSIX.1-2008 plus two technical corrigenda).
+
+There’s one more complication: POSIX.1-2008 (aka “Issue 7”) isn’t fully supported everywhere. (For instance I found that macOS doesn’t support pthread barriers, semaphores, or asynchronous thread cancellation.) I think the root cause is that 2008 requires thread and real-time functionality that was previously in optional extensions. If you stick to functionality in POSIX.1-2001 (aka Issue 6) you should be safe on all reasonably recent platforms.
+
+Activate a version
+To call POSIX functions you must define the _POSIX_C_SOURCE “feature test” macro before including header files. Select a specific POSIX version by using one of these values:
+
+Edition	Release year	Macro value
+1	1988	(N/A)
+2	1990	1
+3	1992	2
+4	1993	199309L
+5	1995	199506L
+6	2001	200112L
+7	2008	200809L
+Header files hide or reveal functions based on the feature test macro. For example, the getline() function from Issue 7 allocates memory and reads a line.
+
+/* line.c */
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h> /* ssize_t */
+
+int main(void)
+{
+	char *line = NULL;
+	size_t len = 0;
+	ssize_t read;
+	while ((read = getline(&line, &len, stdin)) != -1)
+		printf("Length %zd: %s", read, line);
+	free(line);
+	return 0;
+}
+Trying to use getline() on Issue 6 (POSIX.1-2001) fails:
+
+$ cc -std=c99 -pedantic -Werror -D_POSIX_C_SOURCE=200112L line.c -o line
+
+line.c:10:17: error: implicit declaration of function 'getline' is invalid in C99 [-Werror,-Wimplicit-function-declaration]
+        while ((read = getline(&line, &len, stdin)) != -1)
+                       ^
+1 error generated.
+Selecting Issue 7 with -D_POSIX_C_SOURCE=200809L fixes it.
+
+Important note: setting _POSIX_C_SOURCE will hide non-POSIX operating system extras in the standard headers. The best practice is to separate your source files into those that are POSIX conformant, and those (hopefully few) that aren’t. Compile the latter without the feature macro and link them all together at the end.
+
+Use POSIX in the build process too
+POSIX defines the interface for not just the library functions discussed earlier, but for the shell and common tools too. If you use those tools for your builds then you don’t need to install any extra software on destination machines to compile your project.
+
+Probably the most common sources of accidental lock-in are bashisms and GNU extensions to Make. For scripts, use sh, and use (POSIX) make for Makefiles. Too many projects use GNU features needlessly. In fact, learning the portable subset of Make features leads to cleaner, more reliable builds.
+
+This is a topic for an entire article of its own. Chris Wellons wrote a nice tutorial about it. Also “Managing Projects with make” by Andrew Oram (ISBN 0-937175-90-0) is a little book that’s packed with good advice.
+
+Layer 3: Operating system extras
+Operating systems include useful functionality beyond POSIX. For instance extensions to pthreads (setting reader-writer preference or thread processor affinity), access to specialized hardware (like audio or graphics), alternate I/O interfaces and semantics, and functions for safety like strlcpy or pledge.
+
+Three ways to use these features portably are to:
+
+wrap them in your own interface and conditionally compile the implementation, or
+build a static shim library (“libcompat”) as part of your project to use when functionality is missing, or
+link to a third party library that abstracts the details.
+We’ll talk about third-party libraries later. Let’s look at option one now.
+
+Detecting OS functions
+Consider the example of generating random data. It requires help from the OS since POSIX offers only pseudo-random numbers.
+
+We’ll split our Makefile into two parts:
+
+Makefile – specifies targets, dependencies and rules, that hold on all systems
+config.mk – sets macros and build flags specific to the local system
+The Makefile will include the specifics of config.mk like this:
+
+# inside the Makefile...
+
+# set up common options and then...
+
+include config.mk
+We’ll generate config.mk with a configure script. A developer will run the script before their first build to detect the environment options. The most primitive way for configure to work would be to try parse uname and make decisions based on what OS or distro it sees. A more accurate way is to try to directly probe the needed OS C functions.
+
+To see if a C function exists, we can just try compiling test snippets of code and see if they succeed. You might think this is awkward or that it requires cluttering your project with test code, but it’s actually pretty elegant.
+
+First make this shell script helper function:
+
+compiles ()
+{
+	stage="$(mktemp -d)"
+	echo "$2" > "$stage/test.c"
+	(cc -Werror "$1" -o "$stage/test" "$stage/test.c" >/dev/null 2>&1)
+	cc_success=$?
+	rm -rf "$stage"
+	return $cc_success
+}
+The compiles() function takes two arguments: an optional compiler flag, and the source code to attempt to compile.
+
+Portability
+Note that mktemp and cc are not POSIX compliant. You can write your own mktemp function using POSIX primitives, but I wanted to conserve space in this example. For cc, the spec offers c99 (or c89 in 4th edition POSIX). However, the c99 utility doesn’t allow controlling warning levels, and I wanted to specify that warnings be treated as errors. The cc alias is a common de-facto standard.
+
+Let’s use the helper to check for OS random number generators. The BSD world offers arc4random_buf to get random bytes, and Linux offers getrandom. The configure script can check for each feature like this:
+
+if compiles "" "
+	#include <stdint.h>
+	#include <stdlib.h>
+	int main(void)
+	{
+		void (*p)(void *, size_t) = arc4random_buf;
+		return (intptr_t)p;
+	}"
+then
+	echo "CFLAGS += -DHAVE_ARC4RANDOM" >> config.mk
+fi
+
+if compiles "-D_POSIX_C_SOURCE=200112L" "
+	#include <stdint.h>
+	#include <sys/types.h>
+	#include <sys/random.h>
+	int main(void)
+	{
+		ssize_t (*p)(void *, size_t, unsigned int) = getrandom;
+		return (intptr_t)p;
+	}"
+then
+	echo "CFLAGS += -DHAVE_GETRANDOM" >> config.mk
+fi
+See? Not too bad. These code snippets test not only whether the functions exist, but also check their type signatures. Notice how the second example is compiled with POSIX for the ssize_t type, while the first example is intentionally not marked POSIX conformant because doing so would hide the extra function arc4random_buf that BSD puts in stdlib.h.
+
+Wrap OS functions behind your own
+It’s helpful to isolate the use of non-portable functions in a distinct translation unit, and export your own interface on top. That way it’s more straightforward to set up conditional compilation in one place, or to refactor in the future.
+
+Let’s continue the example from the previous section of generating random bytes. With the hard work of OS feature detection behind us, we can wrap the differing OS interfaces behind our own function:
+
+#include <stdint.h>
+#include <stdlib.h>
+#ifdef HAVE_GETRANDOM
+#include <sys/random.h>
+#endif
+
+void get_random_bytes(void *buf, size_t n)
+{
+#if defined HAVE_ARC4RANDOM  /* BSD */
+	arc4random_buf(buf, n);
+#elif defined HAVE_GETRANDOM /* Linux */
+	getrandom(buf, n, 0);
+#else
+#error OS does not provide recognized function to get entropy
+#endif
+}
+The Makefile defines HAVE_ARC4RANDOM or HAVE_GETRANDOM using CFLAGS when the corresponding functions exist. The code can just use ifdefs. Notice the #error in the #else case to fail compilation with a clear message on unsupported platforms.
+
+The degree of portability we strive for causes trade-offs. Example: we could add a fallback to reading /dev/random. The configure script from the previous section could check whether the device exists:
+
+if test -c /dev/random; then
+	echo "CFLAGS += -DHAVE_DEVRANDOM" >> config.mk
+fi
+Using that information, we could add another #elif in get_random_bytes() so that it can potentially work on more systems. However, in this case, the increased portability would require a change in interface. Since fopen() or fread() on /dev/random could fail, our function would need to return bool. Currently the OS functions we’re calling can’t fail, so a void return is fine.
+
+Test on multiple OSes and hardware
+The true test of portability is, of course, building and running on multiple operating systems, compilers, and hardware architectures. It can be surprising to see what assumptions this can uncover. Testing portability early and often makes it easier to keep a program shipshape.
+
+The PostgreSQL project, for instance, maintains a bunch of disparate machines known as the “buildfarm.” Buildfarm members each have their own OS, compiler, and architecture. The team compiles every new feature on these machines and runs the test suite there.
+
+Focusing on the architectures alone, we can see an impressive variety in the buildfarm:
+
+ARM: v6, v7, ARM64
+IA-64
+IBM Z
+MIPS
+PA-RISC
+PowerPC, both big- and little-endian
+SPARC
+x86, including i686 and i386
+x86-64
+Even if you have no intention to run on these architectures, testing there will lead to better code. (See my article C Portability Lessons from Weird Machines.)
+
+Begriffs Buildfarm?
+I’ve been thinking of assembling a buildfarm and offering a paid continuous integration service. If this interests you, please send me an email. I think the project is a good cause, and with enough subscriptions I could cover the electricity and hardware costs.
+
+Layer 4: third-party libraries
+Many languages have their own application-level package managers, but C has no exclusive package manager. The language has too much history and spans too many environments to have locked into that. Instead people build dependencies from source, or use the OS package manager.
+
+Build with pkg-config
+Linking to libraries requires knowing their path, name, and compiler settings. Additionally we want to know which version is installed and whether it’s in-bounds. Since there’s no application-level package manager for C, we need to use another tool to discover installed libraries.
+
+The most cross-platform way to find – and build against – dependency libraries is pkg-config. The tool allows you to query system packages, regardless of how they were installed. To be compatible with pkg-config, each library foo provides a libfoo.pc file containing keys and values like this:
+
+prefix=/usr/local
+exec_prefix=${prefix}
+includedir=${prefix}/include
+libdir=${exec_prefix}/lib
+
+Name: libfoo
+Description: The foo library
+Version: 1.2.3
+Cflags: -I${includedir}/foo
+Libs: -L${libdir} -lfoo
+The pkg-config executable can query the metadata and provide flags for your Makefile. Call it from your configure script like this:
+
+# check that a sufficient version is installed
+pkg-config --print-errors 'libfoo >= 1.0'
+
+# save flags to config.mk
+cat >> config.mk <<-EOF
+	CFLAGS += $(pkg-config --cflags libfoo)
+	LDFLAGS += $(pkg-config --libs-only-L libfoo)
+	LDLIBS += $(pkg-config --libs-only-l libfoo)
+EOF
+Notice the LDLIBS vs LDFLAGS distinction. LDLIBS are options that need to go at the very end of the build line. The default POSIX make suffix rules don’t mention LDLIBS, but here’s a rule you can use instead:
+
+.c:
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< $(LDLIBS)
+Sometimes an operating system will include extra functionality and package it up as a portable library you can use on other operating systems. In this case you can use pkg-config conditionally.
+
+For instance, OpenBSD spun off the LibreSSL project (a more usable OpenSSL). OpenBSD includes the functionality internally. In the configure script just do an operating system check:
+
+# LibreSSL
+case "$(uname -s)" in
+	OpenBSD)
+		# included with OS
+		echo 'LDLIBS += -ltls' >> config.mk
+		;;
+	*)
+		# requires a package
+		pkg-config --print-errors 'libtls >= 2.5.0'
+		cat >> config.mk <<-EOF
+			CFLAGS += $(pkg-config --cflags libtls)
+			LDFLAGS += $(pkg-config --libs-only-L libtls)
+			LDLIBS += $(pkg-config --libs-only-l libtls)
+		EOF
+esac
+For more information about pkg-config, see Dan Nicholson’s guide.
+
+Compensating for the standard library
+The C standard library has no generic collections. You have to write your own linked lists, trees, and hash tables. Real Programmers™ might like this, but I don’t.
+
+POSIX offers limited help with their interface in search.h:
+
+Binary search tree. This interface has worked for me, although twalk() doesn’t contain an argument to pass auxiliary data to the callback. The callback needs to consult a global or thread-local variable for that. The quality of implementation may vary as well, likely with regard to how/if the tree is balanced.
+Queue. Very basic functions to insert or delete from a doubly linked (possibly circular) list. It takes void*, but expects a structure whose first two members are pointers to the same structure type (forward and backward pointers).
+Hash table. Unnecessarily constrained interface. It creates a single hash table in hidden memory. You can destroy the table and later make another, but can never have more than one active at a time anywhere in the callstack. Obviously not thread safe, but that seems to be the least of its problems.
+To go beyond that, you’ll have to use third-party libraries. Many well-known libraries seem pretty bloated (GLib, tbox, Apache Portable Runtime). I found a smaller, cleaner library called simply C Algorithms. Haven’t used it in a project yet, but it looks stable and well tested. I also built the library locally with added pedantic C99 flags and got no warnings.
+
+Two other stable libraries (code snippets?) which have received a lot of use over the years are Uthash and BSD’s queue(3) (browse queue.h from OpenBSD, or the FreeBSD variant).
+
+Uthash describes itself this way:
+
+Any C structure can be stored in a hash table using uthash. Just add a UT_hash_handle to the structure and choose one or more fields in your structure to act as the key. Then use these macros to store, retrieve or delete items from the hash table."
+
+The BSD queue code has been used and improved all the way back to the 1990s. It provides macros to create and manipulate singly-linked lists, simple queues, lists, and tail queues. The man page is quite good.
+
+The functionality differs in the codebase of OpenBSD and FreeBSD. I use the OpenBSD version, but it has a little less functionality. In particular, FreeBSD adds the STAILQ (singly-linked tail queue), and a list swap operation. There was once a CIRCLEQ for circular queues, but it used dodgy coding practices and was removed.
+
+Both Uthash and Queue are header files with macros that you vendor into your project and include rather than linking against. In general I consider “header-only libraries” to be undesirable because they abuse the notion of a translation unit, bloat object files, and make debugging harder. However I’ve used these libraries and they do work well.
+
+User interface
+The fewer UI features a program requires, the more portable it will be and the fewer opportunities there will be for it to mess up. (Does your command line app really need to output an emoji rocket ship or animated-in-place text spinner?)
+
+The lowest common denominator is the standard I/O library in C, or its equivalent in other languages. Reading and writing text, pretending to be a teletype.
+
+The next level of sophistication is static output but an input line you can modify (like the fancier teletypes that could edit a line before sending). Different terminals support intraline editing differently, and you should use a library to handle it. The classic is GNU readline. Readline provides this functionality:
+
+Moving the text cursor (vi and emacs modes)
+Searching the command history
+Controlling a kill ring
+Using tab completion
+Its license is straight up GPL though, not even LGPL. There are more permissive knockoffs like libedit (requires ncurses), or linenoise (which is restricted to VT100 terminals/emulators).
+
+Going up yet another level is the text user interface (TUI), where the whole screen is your canvas, but you draw on it with text. Historically terminal control codes diverged wildly, so a standard programming interface was born, X/Open Curses. The most popular implementation is ncurses, which adds some nonstandard extensions as well.
+
+Curses handles these tasks:
+
+Terminal capability detection
+“Raw” mode keyboard input
+Cursor motion
+Line drawing
+Highlighting, underlining
+Inserting and deleting lines and characters
+Status line
+Area clear
+Windows
+Color
+To stop pretending the computer is an archaic device from the 70s, you can use the cross-platform SDL2 library. It gives low level access to audio, keyboard, mouse, joystick, and graphics hardware. The platform support really is impressive. Everything from Unix, Mac, and Windows to mobile and web rendering.
+
+Finally, for a classic native desktop application with widgets, the most stable and portable choice is probably Motif. The interface is stark, but it runs everywhere, and won’t change or break on you.
+
+Sample of Motif widgets
+The Motif Programming Manual (free download) says this by way of introduction:
+
+So why motif? Because it remains what it has long been: the common native windowing toolkit for all the UNIX platforms, fully supported by all the major operating system vendors. It is still the only truly industrial strength toolkit capable of supporting large scale and long term projects. Everything else is tainted: it isn’t ready or fully functionally complete, or the functional specification changes in a non-backwards-compatible manner per release, or there are performance issues. Perhaps it doesn’t truly port across UNIX systems, or it isn’t fully ICCCM compliant with software written in any other toolkit on the desktop, or there are political battles as various groups try to control the specification for their own purposes. […] With motif, you know where you are: it’s stable, it’s robust, it’s professionally supported, and it all works.
+
+A reference manual is also available for download.
+
+I was a little skeptical that it would be supported on macOS, but I tried the hello world example and, sure enough, it worked fine on XQuartz. I think there’s value in using Motif rather than a monster like GTK.
+
+Newsletter
+Do you like these videos and blog posts? Sign up for the Begriffs Newsletter for notifications of new posts, events, and ideas. (Pretty low-volume, once every few weeks.)
+
+Email *
+First name *
+Last name *
+Written by Joe "begriffs" Nelson. joe@begriffs.com 🔑
